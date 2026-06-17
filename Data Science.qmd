@@ -18,23 +18,20 @@ Fragestellungen zur Beantwortung der Hauptfrage:
 
 - 
 
-Zuerst wird der Datensatz eingelesen. Hierfür wird die CSV-Datei von <https://www.openintro.org/data/index.php?data=golub> heruntergeladen.
+Zuerst wird der Datensatz eingelesen. Hierfür wird die CSV-Datei von <https://www.openintro.org/data/index.php?data=golub> (zuletzt verwendet 17.06.2026) heruntergeladen.
 
-Zum Einlesen der CSV-Datei wird das Paket readr verwendet. Es stellt die Funktion read_csv() zur Verfügung, um große CSV-Dateien einlesen zu können. Beim Einlesen von read.csv gibt es Formatierungsprobleme. An dieser Stelle wurde KI zur Hilfe und Erklärung genutzt.
+Zum Einlesen der CSV-Datei wurde KI zur Hilfe und Erklärung genutzt, da nicht sofort ersichtlich war, welche Trenzeichen und Dezimalzeichen im Datensatz verwendet wurden. Dies führte zu Formatierungsproblemen. Mit folgendem Einlesebefehl konnten diese jedoch behoben werden.
 
 ```{r}
-install.packages("readr")
-library(readr)
 
-golub <- read_csv("golub.csv")
+golub <- read.csv("golub.csv", sep = ";", dec = ",")
 ```
 
-Im nächsten Schritt wird sich ein Überblick über den Datensatz verschafft.
+Im nächsten Schritt wird sich ein Überblick über den Datensatz verschafft. Dazu wird mit dem Befehl dim überprüft, wieviele Zeilen und Spalten der Datensatz aufweist. Außerdem wird mit dem Befehl head eine Übersicht angezeigt.
 
 ```{r}
 dim(golub)
-head(golub)
-names(golub)
+head(golub[, 1:10])
 ```
 
-Der Datensatz weist 362 Zeilen und 2962 Spalten auf.
+Der Datensatz weist 72 Zeilen und 7135 Spalen auf, was zur Beschreibung unter <https://www.openintro.org/data/index.php?data=golub> (zuletzt verwendet 17.06.2026) passt. Jede Zeile steht dabei für einen Patienten, jede Spalte für eine Variable. Die ersten 6 Variablen enthalten Metadaten, während die restlichen Variablen für Expressionsdaten stehen.
