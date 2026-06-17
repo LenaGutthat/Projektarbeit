@@ -1,0 +1,25 @@
+---
+title: "Data Science"
+format: html
+editor: visual
+---
+
+Es wird sich für den Datensatz aus "Molecular Classification of Cancer: Class Discovery and Class Prediction by Gene Expression Monitoring"(<https://www.science.org/doi/10.1126/science.286.5439.531>) entschieden.
+
+Hauptfragestellung:
+
+**Können AML- und ALL-Patienten anhand ihrer Genexpression voneinander unterschieden werden?**
+
+Fragestellungen zur Beantwortung der Hauptfrage:
+
+- 
+
+- 
+
+- 
+
+Zuerst wird der Datensatz eingelesen:
+
+```{r}
+
+```
