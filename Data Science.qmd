@@ -18,8 +18,23 @@ Fragestellungen zur Beantwortung der Hauptfrage:
 
 - 
 
-Zuerst wird der Datensatz eingelesen:
+Zuerst wird der Datensatz eingelesen. Hierfür wird die CSV-Datei von <https://www.openintro.org/data/index.php?data=golub> heruntergeladen.
+
+Zum Einlesen der CSV-Datei wird das Paket readr verwendet. Es stellt die Funktion read_csv() zur Verfügung, um große CSV-Dateien einlesen zu können. Beim Einlesen von read.csv gibt es Formatierungsprobleme. An dieser Stelle wurde KI zur Hilfe und Erklärung genutzt.
 
 ```{r}
+install.packages("readr")
+library(readr)
 
+golub <- read_csv("golub.csv")
 ```
+
+Im nächsten Schritt wird sich ein Überblick über den Datensatz verschafft.
+
+```{r}
+dim(golub)
+head(golub)
+names(golub)
+```
+
+Der Datensatz weist 362 Zeilen und 2962 Spalten auf.
