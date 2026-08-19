@@ -4,34 +4,43 @@ format: html
 editor: visual
 ---
 
-Es wird sich für den Datensatz aus "Molecular Classification of Cancer: Class Discovery and Class Prediction by Gene Expression Monitoring"(https://www.science.org/doi/10.1126/science.286.5439.531) entschieden.
+Es wird sich für den Datensatz aus "Molecular Classification of Cancer: Class Discovery and Class Prediction by Gene Expression Monitoring"(<https://www.science.org/doi/10.1126/science.286.5439.531>) entschieden.
 
 Hauptfragestellung:
 
-Können AML- und ALL-Patienten anhand ihrer Genexpression voneinander unterschieden werden?
+**Können AML- und ALL-Patienten anhand ihrer Genexpression voneinander unterschieden werden?**
 
 Fragestellungen zur Beantwortung der Hauptfrage:
 
-Zuerst wird der Datensatz eingelesen. Hierfür wird die CSV-Datei von https://www.openintro.org/data/index.php?data=golub (zuletzt verwendet 17.06.2026) heruntergeladen.
+- 
+
+- 
+
+- 
+
+Zuerst wird der Datensatz eingelesen. Hierfür wird die CSV-Datei von <https://www.openintro.org/data/index.php?data=golub> (zuletzt verwendet 17.06.2026) heruntergeladen.
 
 Zum Einlesen der CSV-Datei wurde KI zur Hilfe und Erklärung genutzt, da nicht sofort ersichtlich war, welche Trenzeichen und Dezimalzeichen im Datensatz verwendet wurden. Dies führte zu Formatierungsproblemen. Mit folgendem Einlesebefehl konnten diese jedoch behoben werden.
 
-{r}
+```{r}
 
 golub <- read.csv("./golub_raw.csv", sep = ",", dec = ".")
+```
 
 Im nächsten Schritt wird sich ein Überblick über den Datensatz verschafft. Dazu wird mit dem Befehl dim überprüft, wieviele Zeilen und Spalten der Datensatz aufweist. Außerdem wird mit dem Befehl head eine Übersicht angezeigt.
 
-{r}
+```{r}
 dim(golub)
 head(golub[, 1:10])
+```
 
-Der Datensatz weist 72 Zeilen und 7135 Spalen auf, was zur Beschreibung unter https://www.openintro.org/data/index.php?data=golub (zuletzt verwendet 17.06.2026) passt. Jede Zeile steht dabei für einen Patienten, jede Spalte für eine Variable. Die ersten 6 Variablen enthalten Metadaten, während die restlichen Variablen für Expressionsdaten stehen.
+Der Datensatz weist 72 Zeilen und 7135 Spalen auf, was zur Beschreibung unter <https://www.openintro.org/data/index.php?data=golub> (zuletzt verwendet 17.06.2026) passt. Jede Zeile steht dabei für einen Patienten, jede Spalte für eine Variable. Die ersten 6 Variablen enthalten Metadaten, während die restlichen Variablen für Expressionsdaten stehen.
 
 Wir entfernen Proben, dessen Geschlecht nicht bekannt ist.
 
-{r}
+```{r}
 golub_clean <- golub %>% filter(!is.na(Gender))
+```
 
 Wir sortieren die Spalten
 
@@ -39,7 +48,7 @@ Wir bringen die Daten ins long-Format
 
 Wir normalisieren die Expressionsdaten
 
-{r}
+```{r}
 gene_cols <- colnames(golub_clean)[7:ncol(golub_clean)]
 golub_long_raw <- golub %>%
   arrange(BM.PB, Samples) %>%
@@ -58,16 +67,18 @@ golub_long <- golub_clean %>%
     names_to = "Gene",
     values_to = "Expression"
   )
+```
 
 Die verarbeiteten Daten werden als csv gespeichet
 
-{r}
+```{r}
 write.csv(golub_long, "golub_long.csv", row.names = FALSE)
 
+```
 
 Visualisierung der normalisierten Daten
 
-{r}
+```{r}
 golub_long_raw %>%
   filter(Gene %in% gene_cols[1:49]) %>%
   select(Samples, Gene, Expression) %>%
@@ -81,3 +92,5 @@ golub_long %>%
   pivot_wider(names_from = Gene, values_from = Expression) %>%
   select(-Samples) %>%
   boxplot(main = "Gen-Expressionswerte normalisiert")
+
+```
