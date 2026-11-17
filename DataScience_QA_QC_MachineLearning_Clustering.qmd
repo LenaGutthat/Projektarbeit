@@ -1,0 +1,560 @@
+---
+title: "Data Science"
+format:
+  html:
+    toc: true
+    embed-resources: true
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+```
+
+Es wird sich für den Datensatz aus "Molecular Classification of Cancer: Class Discovery and Class Prediction by Gene Expression Monitoring"(<https://www.science.org/doi/10.1126/science.286.5439.531>) entschieden.
+
+Hauptfragestellung:
+
+**Können AML- und ALL-Patienten anhand ihrer Genexpression voneinander unterschieden werden?**
+
+Fragestellungen zur Beantwortung der Hauptfrage:
+
+-   Sind die Daten für den Vergleich geeignet (Qualität, Konfundierung)?
+-   Trennen sich AML und ALL schon in der PCA?
+-   Wie gut sagen ML-Modelle den Krebstyp voraus, und welche Gene sind wichtig?
+-   Gruppieren die Proben sich anhand ihrer Genexpressionswerte durch hierachisches Clustering so, dass die Cluster mit den Diagnosen AML und ALL übereinstimmen?
+
+Zuerst wird der Datensatz eingelesen. Hierfür wird die CSV-Datei von <https://www.openintro.org/data/index.php?data=golub> (zuletzt verwendet 17.06.2026) heruntergeladen.
+
+Zum Einlesen der CSV-Datei wurde KI zur Hilfe und Erklärung genutzt, da nicht sofort ersichtlich war, welche Trenzeichen und Dezimalzeichen im Datensatz verwendet wurden. Dies führte zu Formatierungsproblemen. Mit folgendem Einlesebefehl konnten diese jedoch behoben werden.
+
+```{r}
+
+golub <- read.csv("./golub_raw.csv", sep = ",", dec = ".")
+```
+
+Im nächsten Schritt wird sich ein Überblick über den Datensatz verschafft. Dazu wird mit dem Befehl dim überprüft, wieviele Zeilen und Spalten der Datensatz aufweist. Außerdem wird mit dem Befehl head eine Übersicht angezeigt.
+
+```{r}
+dim(golub)
+head(golub[, 1:10])
+```
+
+Der Datensatz weist 72 Zeilen und 7135 Spalen auf, was zur Beschreibung unter <https://www.openintro.org/data/index.php?data=golub> (zuletzt verwendet 17.06.2026) passt. Jede Zeile steht dabei für einen Patienten, jede Spalte für eine Variable. Die ersten 6 Variablen enthalten Metadaten, während die restlichen Variablen für Expressionsdaten stehen.
+
+Wir entfernen Proben, dessen Geschlecht nicht bekannt ist.
+
+```{r}
+golub_clean <- golub %>% filter(!is.na(Gender))
+```
+
+Wir sortieren die Spalten
+
+Wir bringen die Daten ins long-Format
+
+Wir normalisieren die Expressionsdaten
+
+```{r}
+gene_cols <- colnames(golub_clean)[7:ncol(golub_clean)]
+golub_long_raw <- golub %>%
+  arrange(BM.PB, Samples) %>%
+  mutate(Samples = row_number()) %>%
+  pivot_longer(
+    cols = all_of(gene_cols),
+    names_to = "Gene",
+    values_to = "Expression"
+  )
+golub_long <- golub_clean %>%
+  arrange(BM.PB, Samples) %>%
+  mutate(Samples = row_number()) %>%
+  mutate(across(all_of(gene_cols), scale)) %>%
+  pivot_longer(
+    cols = all_of(gene_cols),
+    names_to = "Gene",
+    values_to = "Expression"
+  )
+```
+
+Die verarbeiteten Daten werden als csv gespeichet
+
+```{r}
+write.csv(golub_long, "golub_long.csv", row.names = FALSE)
+
+```
+
+Visualisierung der normalisierten Daten
+
+```{r}
+golub_long_raw %>%
+  filter(Gene %in% gene_cols[1:49]) %>%
+  select(Samples, Gene, Expression) %>%
+  pivot_wider(names_from = Gene, values_from = Expression) %>%
+  select(-Samples) %>%
+  boxplot(main = "Gen-Expressionswerte (Rohdaten)")
+
+golub_long %>%
+  filter(Gene %in% gene_cols[1:49]) %>%
+  select(Samples, Gene, Expression) %>%
+  pivot_wider(names_from = Gene, values_from = Expression) %>%
+  select(-Samples) %>%
+  boxplot(main = "Gen-Expressionswerte normalisiert")
+```
+
+#Qualitätskontrolle (QA/QC)
+
+Im nächsten Schritt wird die Qualität der Daten überprüft. Dazu wird zuerst geschaut, ob die Daten Auffälligkeiten haben (Quality Assessment). Danach werden die Daten bei Bedarf verändert, zum Beispiel durch eine Transformation oder das Entfernen von Proben (Quality Control).
+
+Für den Code in diesem Abschnitt wurde KI zur Hilfe und Erklärung genutzt. Der Code wurde danach durchgegangen und angepasst.
+
+##Vorbereitung
+
+Zuerst werden die benötigten Pakete geladen. Danach wird `golub_clean` in die Metadaten (Spalten 1 bis 6) und die Expressionsdaten (ab Spalte 7) aufgeteilt. Mit dem Befehl `colnames` wird überprüft, wie die Spalten der Metadaten heißen. Außerdem wird kontrolliert, ob alle Expressionswerte Zahlen sind.
+
+```{r qc_vorbereitung}
+library(tidyverse)
+library(caret)
+library(pROC)
+
+meta <- golub_clean[, 1:6]
+expr <- golub_clean[, 7:ncol(golub_clean)]
+
+## ursprüngliche Krebstypen aufheben und eine Spalte mit nur AML/ALL anlegen
+meta$cancer_detail <- meta$cancer
+meta$cancer <- ifelse(grepl("aml", meta$cancer_detail, ignore.case = TRUE), "AML", "ALL")
+
+## Kontrolle: wurde richtig zugeordnet?
+table(meta$cancer_detail, meta$cancer, useNA = "ifany")
+
+colnames(meta)
+dim(meta)
+dim(expr)
+
+## sind alle Expressionswerte wirklich Zahlen?
+all(sapply(expr, is.numeric))
+```
+
+Überprüfung der Metadaten (QA)
+
+Als Nächstes werden die Metadaten angeschaut. Mit dem Befehl `colSums` wird überprüft, ob Werte fehlen, und mit dem Befehl `table` wird gezählt, wie viele Patienten es pro Gruppe gibt. In der Kreuztabelle wird außerdem geschaut, ob der Krebstyp mit dem Probenmaterial (`BM.PB`, Knochenmark oder Blut) zusammenhängt. Das wird zusätzlich mit dem Fisher-Test überprüft. Wenn es einen Zusammenhang gibt, kann man später nicht unterscheiden, ob ein Unterschied vom Krebstyp oder vom Probenmaterial kommt.
+
+```{r qc_metadaten}
+## fehlende Werte pro Metadaten-Spalte
+colSums(is.na(meta))
+
+## Verteilung der Gruppen (Spaltennamen ggf. anpassen)
+table(meta$cancer)
+table(meta$Gender)
+table(meta$BM.PB)
+
+## Kreuztabelle: Krebstyp und Probenmaterial
+table(meta$cancer, meta$BM.PB)
+
+## Fisher-Test: hängen Krebstyp und Probenmaterial zusammen?
+fisher.test(table(meta$cancer, meta$BM.PB))
+```
+
+##Fehlende Werte und Wertebereich
+
+Danach werden die Expressionsdaten angeschaut. Es wird überprüft, ob Werte fehlen und in welchem Bereich die Werte liegen (kleinster und größter Wert). Daran kann man sehen, ob die Daten schon logarithmiert wurden.
+
+```{r qc_wertebereich}
+expr_mat <- as.matrix(expr)
+
+## fehlende Werte
+sum(is.na(expr_mat))
+
+## Wertebereich
+min(expr_mat)
+max(expr_mat)
+summary(as.vector(expr_mat))
+```
+
+##Mean-Sd-Plot der Rohdaten
+
+Für jedes Gen werden der Mittelwert und die Standardabweichung berechnet. Im Mean-Sd-Plot wird die Standardabweichung gegen den Rang des Mittelwerts aufgetragen. Wenn die Standardabweichung mit dem Mittelwert steigt, ist eine Transformation sinnvoll.
+
+```{r qc_meansd_roh}
+mean_sd_roh <- data.frame(
+    mean = colMeans(expr_mat),
+    sd = apply(expr_mat, 2, sd)
+)
+mean_sd_roh$rank_mean <- rank(mean_sd_roh$mean)
+
+ggplot(mean_sd_roh, aes(x = rank_mean, y = sd)) +
+    geom_point(alpha = 0.3, size = 0.5) +
+    labs(title = "Mean-Sd-Plot (Rohdaten)", x = "rank(mean)", y = "sd") +
+    theme_classic()
+```
+
+##Überarbeitung der Rohdaten durch Transformation (QC)
+
+Die Rohdaten sind sehr ungleichmäßig verteilt: Es gibt viele kleine und wenige sehr große Werte, und große Werte streuen stärker als kleine. Deshalb wird der Logarithmus (log2) angewendet. Er rückt die Werte näher zusammen. Der Logarithmus funktioniert aber nicht für Null und negative Zahlen. Deshalb werden alle Werte unter 100 vorher auf 100 gesetzt. Der Code prüft außerdem selbst, ob die Daten schon logarithmiert sind. Wenn ja, werden sie nicht noch einmal verändert. Zusätzlich werden Gene entfernt, die in allen Proben denselben Wert haben, weil die PCA sonst eine Fehlermeldung ausgibt.
+
+```{r qc_transformation}
+if (max(expr_mat) > 1000) {
+    expr_log <- log2(pmax(expr_mat, 100))
+    cat("Rohe Intensitäten erkannt: Schwellenwert 100 und log2-Transformation\n")
+} else {
+    expr_log <- expr_mat
+    cat("Daten sind bereits transformiert, keine weitere Transformation\n")
+}
+
+## Gene ohne jegliche Streuung entfernen (diese würden bei der PCA mit scale. = TRUE Fehler verursachen)
+sd_gene <- apply(expr_log, 2, sd)
+sum(sd_gene == 0)
+expr_log <- expr_log[, sd_gene > 0]
+dim(expr_log)
+```
+
+Zur Kontrolle wird der Mean-Sd-Plot nach der Transformation noch einmal erstellt.
+
+```{r qc_meansd_log}
+mean_sd_log <- data.frame(
+    mean = colMeans(expr_log),
+    sd = apply(expr_log, 2, sd)
+)
+mean_sd_log$rank_mean <- rank(mean_sd_log$mean)
+
+ggplot(mean_sd_log, aes(x = rank_mean, y = sd)) +
+    geom_point(alpha = 0.3, size = 0.5) +
+    labs(title = "Mean-Sd-Plot (log2-transformiert)", x = "rank(mean)", y = "sd") +
+    theme_classic()
+```
+
+##Überprüfung der einzelnen Proben
+
+Im nächsten Schritt werden die einzelnen Proben angeschaut, um auffällige Proben zu finden. Die Farben zeigen den Krebstyp (rot = AML, blau = ALL). Im Boxplot wird für jede Probe die Verteilung aller Gene gezeigt. Die Boxen sollten ungefähr auf derselben Höhe liegen.
+
+```{r qc_boxplot}
+farben <- ifelse(meta$cancer == "AML", "tomato", "steelblue")
+
+boxplot(t(expr_log), col = farben, names = FALSE, outline = FALSE,
+    xlab = "Proben", ylab = "log2-Expression",
+    main = "Verteilung der Expressionswerte pro Probe")
+legend("topright", legend = c("AML", "ALL"), fill = c("tomato", "steelblue"))
+```
+
+Im zweiten Plot wird der Median jeder Probe dargestellt. Proben mit einem sehr anderen Median fallen dort auf.
+
+```{r qc_median}
+probe_median <- apply(expr_log, 1, median)
+
+plot(probe_median, col = farben, pch = 16, xlab = "Proben",
+    ylab = "Median der log2-Expression", main = "Median pro Probe")
+legend("topright", legend = c("AML", "ALL"), pch = 16, col = c("tomato", "steelblue"))
+```
+
+Die ECDF zeigt für jede Probe eine Kurve. Wenn die Kurven übereinander liegen, sind die Proben ähnlich.
+
+```{r qc_ecdf}
+plot(ecdf(expr_log[1, ]), do.points = FALSE, col = farben[1],
+    main = "ECDF pro Probe", xlab = "log2-Expression", ylab = "ECDF")
+for (i in 2:nrow(expr_log)) {
+    lines(ecdf(expr_log[i, ]), do.points = FALSE, col = farben[i])
+}
+```
+
+Zum Schluss wird für jede Probe die Summe der Abstände zu allen anderen Proben berechnet. Ein sehr hoher Wert heißt, dass die Probe den anderen unähnlich ist.
+
+```{r qc_distanz}
+dist_matrix <- as.matrix(dist(expr_log))
+dist_summe <- rowSums(dist_matrix)
+
+plot(dist_summe, col = farben, pch = 16, xlab = "Proben",
+    ylab = "Summe der Distanzen", main = "Summe der Distanzen pro Probe")
+```
+
+##PCA zur Kontrolle
+
+Mit der PCA wird überprüft, ob es Ausreißer oder Gruppen gibt, die nicht vom Krebstyp kommen. Dazu werden die Gene mit dem Befehl `prcomp` zentriert und skaliert (`scale. = TRUE`), damit Gene mit großen Werten nicht alles bestimmen. Die Punkte werden nach Krebstyp, Probenmaterial und Geschlecht eingefärbt. Wenn sich Gruppen nach Probenmaterial oder Geschlecht bilden, könnte das ein störender Effekt sein. Die ausführliche PCA wird im Teil Dimensionsreduktion gemacht, hier dient sie nur zur Kontrolle.
+
+```{r qc_pca}
+pca <- prcomp(expr_log, scale. = TRUE)
+varianz <- round(100 * summary(pca)$importance[2, 1:2], 1)
+
+pca_df <- data.frame(pca$x[, 1:2], meta)
+
+ggplot(pca_df, aes(x = PC1, y = PC2, color = cancer)) +
+    geom_point(size = 2) +
+    labs(title = "PCA nach Krebstyp",
+        x = paste0("PC1 (", varianz[1], " %)"), y = paste0("PC2 (", varianz[2], " %)")) +
+    theme_classic()
+
+ggplot(pca_df, aes(x = PC1, y = PC2, color = BM.PB)) +
+    geom_point(size = 2) +
+    labs(title = "PCA nach Probenmaterial",
+        x = paste0("PC1 (", varianz[1], " %)"), y = paste0("PC2 (", varianz[2], " %)")) +
+    theme_classic()
+
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Gender)) +
+    geom_point(size = 2) +
+    labs(title = "PCA nach Geschlecht",
+        x = paste0("PC1 (", varianz[1], " %)"), y = paste0("PC2 (", varianz[2], " %)")) +
+    theme_classic()
+```
+
+Zusätzlich wird mit einem t-Test überprüft, ob sich die Werte von PC1 und PC2 zwischen den Gruppen unterscheiden.
+
+```{r qc_pca_test}
+t.test(PC1 ~ cancer, data = pca_df)
+t.test(PC2 ~ cancer, data = pca_df)
+t.test(PC1 ~ BM.PB, data = pca_df)
+t.test(PC2 ~ BM.PB, data = pca_df)
+```
+
+```{r qc_abschluss}
+## Ergebnis der Qualitätskontrolle: bereinigte Daten für die weitere Analyse
+meta_qc <- meta
+expr_qc <- as.data.frame(expr_log)
+
+dim(meta_qc)
+dim(expr_qc)
+```
+
+#Clustering
+
+Für den Code in diesem Abschnitt wurde KI zur Hilfe und Erklärung genutzt. Der Code wurde danach durchgegangen und angepasst.
+
+In diesem Teil soll überprüft werden, ob die Proben sich anhand ihrer Genexpressionsdaten so gruppieren, dass die Cluster mit den Krebstypen AML und ALL übereinstimmen. Dazu wird ein hierachisches Clustering durchgeführt. Anschließend werden die Cluster mit den bekannten Diagnosen der Proben verglichen. Für das Clustering werden alle 72 Proben verwendet, da fehlende Geschlechtsidentitäten für die Untersuchung keine Rolle spielen.
+
+```{r}
+expr_alle <- as.matrix(golub[, 7:ncol(golub)])
+```
+
+Jetzt werden die Anzahl der Proben und Genspalten überprüft.
+
+```{r}
+dim(expr_alle)
+```
+
+Zur Vorbereitung wird die Zahl fehlender Werte sowie der Wertebereich überprüft.
+
+```{r}
+sum(is.na(expr_alle))
+
+range(expr_alle)
+```
+
+Die Expressionsdaten enthalten keine fehlenden Werte. Sie werden für das Clustering ohne zusätzliche Standardisierung oder Transformation verwendet. Dabei ist zu beachten, dass Gene mit großer Streuung die Abstände stärker beeinflussen. Es werden die euklidischen Abstände zwischen den Proben berechnet.
+
+```{r}
+abstand_alle <- dist(expr_alle, method = "euclidean")
+```
+
+Jetzt wird die Ward Methode durchgeführt, um die Gruppen so zu wählen, dass die Streuung möglichst wenig zunimmt.
+
+```{r}
+hc_alle <- hclust(abstand_alle, method = "ward.D2")
+```
+
+Die Untergruppen von ALL werden zu einer Diagnose zusammengefasst.
+
+```{r}
+diagnose_alle <- ifelse(
+  grepl("aml", golub$cancer, ignore.case = TRUE),
+  "AML",
+  "ALL"
+)
+```
+
+Das Ergebnis wird als Dendogramm dargestellt.
+
+```{r}
+plot(
+  hc_alle,
+  labels = diagnose_alle,
+  main = "Hierarchisches Clustering aller 72 Proben",
+  xlab = "Proben",
+  sub = "",
+  cex = 0.6
+)
+```
+
+Um zu untersuchen, ob die Gruppierung mit den Diagnosen übereinstimmt, wird das Dendogram in zwei Cluster aufgeteilt und gezählt, wieviele Proben jeder Diagnose den Clustern zugeordnet sind.
+
+```{r}
+cluster_alle <- cutree(hc_alle, k = 2)
+table(Cluster = cluster_alle, Diagnose = diagnose_alle)
+```
+
+Im ersten Cluster befinden sich 43 ALL Proben und 16 AML Proben. Im zweiten Cluster lediglich 4 ALL und 9 AML Proben. Im ersten Cluster überwiegen also die ALL Proben unnd im zweiten Cluster die AML Proben. Da jedoch 16 der 25 AML Proben im ersten Cluster liegen, lässt sich keine klare Trennung der Diagnosen durch Clustering anhand der Genexpressionswerte feststellen.
+
+#Machine Learning
+
+Im nächsten Schritt soll der Krebstyp (AML oder ALL) anhand der Genexpression vorhergesagt werden. Das ist eine Klassifikation, weil der Krebstyp bekannt ist. Es gibt sehr viele Gene, aber nur 72 Proben. Deshalb funktioniert eine normale logistische Regression nicht. Stattdessen werden vier Verfahren aus der Übung verwendet: LASSO-Regression, Decision Tree, Random Forest und SVM.
+
+##Vorbereitung
+
+Zuerst wird der Krebstyp als Faktor festgelegt. AML ist die positive Klasse. Das heißt, die Sensitivität gibt an, wie viele AML-Patienten richtig erkannt werden. Damit die Rechnung nicht zu lange dauert, werden nur die 500 Gene mit der größten Streuung verwendet. Dabei wird der Krebstyp nicht benutzt, die Auswahl beeinflusst die Testergebnisse also nicht.
+
+```{r ml_vorbereitung}
+y <- factor(meta_qc$cancer, levels = c("ALL", "AML"))
+anyNA(y)   ## muss FALSE sein, sonst heißen die Gruppen anders
+table(y)
+
+## die 500 variabelsten Gene
+gen_sd <- apply(expr_qc, 2, sd)
+top_gene <- names(sort(gen_sd, decreasing = TRUE))[1:500]
+x <- expr_qc[, top_gene]
+dim(x)
+```
+
+Aufteilung in Trainings- und Testdaten
+
+Die Daten werden im Verhältnis 70/30 in Trainings- und Testdaten aufgeteilt. Mit dem Befehl `createDataPartition` bleibt das Verhältnis von AML und ALL in beiden Teilen gleich. Mit den Trainingsdaten werden die Modelle gebaut und mit einer 10-fachen Kreuzvalidierung eingestellt. Die Testdaten werden erst am Ende benutzt. Mit `set.seed` bleibt die Aufteilung bei jedem Durchlauf gleich.
+
+```{r ml_split}
+set.seed(2026)
+train_index <- createDataPartition(y, p = 0.7, list = FALSE)
+
+train_x <- x[train_index, ]
+test_x <- x[-train_index, ]
+train_y <- y[train_index]
+test_y <- y[-train_index]
+
+table(train_y)
+table(test_y)
+
+## Kreuzvalidierung: 10-fold, Wahrscheinlichkeiten werden für die ROC-Kurve benötigt
+ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE)
+```
+
+LASSO-Regression
+
+Bei der LASSO-Regression werden unwichtige Gene aussortiert, indem ihr Koeffizient auf null gesetzt wird. Wie stark aussortiert wird, bestimmt der Wert `lambda`. Er wird mit der Kreuzvalidierung ausgewählt. Die Daten werden vorher zentriert und skaliert.
+
+```{r ml_lasso}
+set.seed(2026)
+lasso_model <- train(
+    x = train_x, y = train_y,
+    method = "glmnet",
+    trControl = ctrl,
+    tuneGrid = expand.grid(alpha = 1, lambda = 10^seq(-3, 0, length = 15)),
+    preProcess = c("center", "scale"),
+    metric = "Accuracy"
+)
+lasso_model
+plot(lasso_model)
+```
+
+##Decision Tree
+
+Der Decision Tree teilt die Patienten Schritt für Schritt anhand von Schwellenwerten einzelner Gene auf. Mit dem Wert `cp` wird eingestellt, wie groß der Baum wird. Ein kleiner Wert ergibt einen großen Baum, ein großer Wert einen kleinen Baum.
+
+```{r ml_tree}
+library(rpart)
+library(rpart.plot)
+
+set.seed(2026)
+tree_model <- train(
+    x = train_x, y = train_y,
+    method = "rpart",
+    trControl = ctrl,
+    tuneGrid = expand.grid(cp = seq(0.001, 0.1, length = 20)),
+    metric = "Accuracy"
+)
+tree_model
+plot(tree_model)
+rpart.plot(tree_model$finalModel)
+```
+
+##Random Forest
+
+Der Random Forest besteht aus vielen Entscheidungsbäumen, deren Ergebnisse zusammengenommen werden. Dadurch ist er stabiler als ein einzelner Baum. Der Wert `mtry` gibt an, wie viele Gene bei jeder Aufteilung zufällig zur Auswahl stehen.
+
+```{r ml_rf}
+library(randomForest)
+
+set.seed(2026)
+rf_model <- train(
+    x = train_x, y = train_y,
+    method = "rf",
+    trControl = ctrl,
+    tuneGrid = expand.grid(mtry = c(10, 22, 50, 100)),
+    ntree = 500,
+    importance = TRUE,
+    metric = "Accuracy"
+)
+rf_model
+plot(rf_model)
+```
+
+##SVM
+
+Die SVM sucht eine Trennlinie zwischen AML und ALL. Der Wert `C` gibt an, wie stark Fehler bestraft werden. Die Daten werden vorher zentriert und skaliert.
+
+```{r ml_svm}
+library(kernlab)
+
+set.seed(2026)
+svm_model <- train(
+    x = train_x, y = train_y,
+    method = "svmLinear",
+    trControl = ctrl,
+    tuneGrid = expand.grid(C = c(0.01, 0.1, 0.25, 0.5, 1, 2, 5)),
+    preProcess = c("center", "scale"),
+    metric = "Accuracy"
+)
+svm_model
+plot(svm_model)
+```
+
+##Vergleich der Modelle
+
+Jetzt werden die Modelle mit den Testdaten überprüft. Dafür werden vier Werte berechnet: Accuracy (Anteil der richtigen Vorhersagen), Sensitivität (Anteil der richtig erkannten AML-Patienten), Spezifität (Anteil der richtig erkannten ALL-Patienten) und die AUC (Fläche unter der ROC-Kurve). Mit der Konfusionsmatrix sieht man, welche Patienten falsch eingeordnet wurden.
+
+```{r ml_bewertung}
+modelle <- list(
+    "LASSO" = lasso_model,
+    "Decision Tree" = tree_model,
+    "Random Forest" = rf_model,
+    "SVM" = svm_model
+)
+
+ergebnis <- data.frame(model = names(modelle), accuracy = NA,
+    sensitivity = NA, specificity = NA, auc = NA)
+
+for (i in seq_along(modelle)) {
+    pred <- predict(modelle[[i]], newdata = test_x)
+    prob <- predict(modelle[[i]], newdata = test_x, type = "prob")[, "AML"]
+    cm <- confusionMatrix(pred, test_y, positive = "AML")
+
+    ergebnis$accuracy[i] <- cm$overall["Accuracy"]
+    ergebnis$sensitivity[i] <- cm$byClass["Sensitivity"]
+    ergebnis$specificity[i] <- cm$byClass["Specificity"]
+    ergebnis$auc[i] <- as.numeric(auc(roc(test_y, prob,
+        levels = c("ALL", "AML"), direction = "<")))
+}
+
+ergebnis[, -1] <- round(ergebnis[, -1], 3)
+knitr::kable(ergebnis)
+
+## Konfusionsmatrix des Random Forest als Beispiel
+confusionMatrix(predict(rf_model, newdata = test_x), test_y, positive = "AML")
+```
+
+Die ROC-Kurven aller Modelle werden in einer Abbildung gezeigt. Je näher eine Kurve an der linken oberen Ecke liegt, desto besser ist das Modell.
+
+```{r ml_roc}
+roc_liste <- lapply(modelle, function(m) {
+    prob <- predict(m, newdata = test_x, type = "prob")[, "AML"]
+    roc(test_y, prob, levels = c("ALL", "AML"), direction = "<")
+})
+
+ggroc(roc_liste) +
+    labs(title = "ROC-Kurven auf den Testdaten", color = "Modell") +
+    theme_classic()
+```
+
+Wichtige Gene
+
+Zum Schluss wird angeschaut, welche Gene für die Vorhersage am wichtigsten waren. Dazu werden die Variablenwichtigkeiten von Random Forest und LASSO verglichen. Gene, die bei beiden weit oben stehen, sind wahrscheinlich besonders wichtig für die Unterscheidung von AML und ALL.
+
+```{r ml_varimp}
+plot(varImp(rf_model), top = 10, main = "Random Forest: wichtigste Gene")
+plot(varImp(lasso_model), top = 10, main = "LASSO: wichtigste Gene")
+```
+
+Einschränkungen
+
+Der Testdatensatz ist mit etwa 21 Patienten sehr klein. Ein einzelner Fehler verändert die Accuracy deshalb schon deutlich. Außerdem gibt es mehr ALL- als AML-Patienten. Die Ergebnisse hängen auch von der zufälligen Aufteilung ab.
